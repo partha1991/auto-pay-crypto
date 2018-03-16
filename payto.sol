@@ -36,15 +36,17 @@ Subscriber[] subscriber;
 struct Subscriber {
    address subscriberAddress; 
    bytes32 userName;
-   uint balances; 
-   Subscription[] subscription; 
+   uint balances;  
    accountStatus subscriberStatus;
    }
 
+mapping (address => uint32[]) subscriberAddressToSubscriptionIndices;
+Subscription[] subscriptions;
 struct Subscription {
    bytes32 serviceName;
-   accountStatus subscriptionstatus;
-   bytes32 subscriberSince;
+   accountStatus subscriptionStatus;
+   uint256 subscriberSince;
+   bytes32 userName;
   }
 // needs to be memory
   mapping (bytes32 => uint) serviceToTotalMonthlyPayoutAmount;
@@ -83,33 +85,36 @@ modifier companyExistsAndActive(bytes32 _companyName){
 
 
 function registerAsSubscriber(bytes32 _userName) subscriberExistsOrInactive {
- Subscription[] _newSub;
- Subscriber newSubscriber =  Subscriber(msg.sender, _userName, 0, _newSub, accountStatus.active);
- uint _newSubscriberId = subscriber.push(newSubscriber);
+ //Subscription[] _newSub;
+ Subscriber memory _newSubscriber =  Subscriber(msg.sender, _userName, 0, accountStatus.active);
+ uint _newSubscriberId = subscriber.push(_newSubscriber);
  subscriberAddressToIndex[msg.sender] = _newSubscriberId;
 
 } //- [send money initially] // subscriber doesn’t exists  or is in active (modifiers)
 
 function loadMoneyAsSubscriber() subscriberExistsAndActive payable{
   uint _subId = subscriberAddressToIndex[msg.sender]; 
-  subscriber[_subId].balances =+ msg.value;
+  subscriber[_subId].balances += msg.value;
 }
 
 //Load money as a subscriber()  //subscriber exists  & is active (modifiers)
-function ViewBalances() subscriberExistsAndActive returns (uint _subscriberBalance) {
+function ViewBalances() subscriberExistsAndActive view returns (uint _subscriberBalance) {
   uint _subId = subscriberAddressToIndex[msg.sender]; 
-  subscriber[_subId].balances;
+  return subscriber[_subId].balances;
 }
 
 function checkIfSubscriptionExists(bytes32 _serviceName) view 
-  returns (bool _serviceExists, uint32 _serviceIndexInSub){
-Subscription[] _existingSubscriptions = subscriberAddressToIndex[msg.sender].subscription;
-
-for(uint _index=0; _index < _existingSubscriptions.length; _index++)
+  returns (bool _serviceExists, uint32 _subscriptionArrayIndex){
+uint32[] storage _existingSubscriptionIds = subscriberAddressToSubscriptionIndices[msg.sender];
+//length > 0 already part of for loop
+for(uint32 _index=0; _index < _existingSubscriptionIds.length; _index++)
   {
-    if( keccak256(_existingSubscriptions[_index].serviceName) == keccak256(_serviceName) )
+    if( (keccak256(subscriptions[_existingSubscriptionIds[_index]].serviceName) == 
+    keccak256(_serviceName)) && 
+    (keccak256(subscriptions[_existingSubscriptionIds[_index]].userName) == 
+     keccak256(subscriber[subscriberAddressToIndex[msg.sender]].userName)))
     {
-        return(true, _index);
+        return(true, _existingSubscriptionIds[_index]);
     } 
   }
 return(false, 0);
@@ -118,18 +123,56 @@ return(false, 0);
 //Subscribe for services - notify company (event) - SubscribeToAServiceFromACompany()
 function subscribeForServices(bytes32 _serviceName) subscriberExistsAndActive
    servicesExistsAndActive(_serviceName) returns (bool){
-Subscription _newSubscription = new Subscription(_serviceName, accountStatus.active, now());
-subscriber[subscriberAddressToIndex[msg.sender]].subscription.push(_newSubscription);
+     bool _subExists;
+     uint32 _subIndex;
+    (_subExists,_subIndex) = checkIfSubscriptionExists(_serviceName);
+    if(_subExists)
+    {
+      subscriptions[_subIndex].subscriptionStatus = accountStatus.active;
+      subscriptions[_subIndex].subscriberSince = now;
+    } else {
+    Subscription memory _newSubscription;
+    _newSubscription = Subscription(_serviceName, accountStatus.active, now, 
+    subscriber[subscriberAddressToIndex[msg.sender]].userName);
+    subscriptions.push(_newSubscription);
+   }
 return true;
 }
 
-function cancelSubscriptionForService(bytes32){
-
+function cancelSubscriptionForService(bytes32 _serviceName) subscriberExistsAndActive
+   servicesExistsAndActive(_serviceName) returns (bool){
+    bool _subExists;
+     uint32 _subIndex;
+    (_subExists,_subIndex) = checkIfSubscriptionExists(_serviceName);
+      require(_subExists);
+      subscriptions[_subIndex].subscriptionStatus = accountStatus.inactive;
+      subscriptions[_subIndex].subscriberSince = now;
+    
 }
 //Cancel subscription for service() - notify company (event) 
 //Withdraw Money() - //subscriber exists  & is active (modifiers) & has money in the account
 //Deregister as a subscriber() // subscriber exists  & is active (modifiers)
 
+ function withdrawMoney(uint amt) subscriberExistsAndActive returns (bool) {
+   uint _subId = subscriberAddressToIndex[msg.sender]; 
+   require(subscriber[_subId].balances >= amt);
+   subscriber[_subId].balances -= amt;
+   msg.sender.transfer(amt);
+   return true;
+ }
 
+ function deregisterAsSubscriber() subscriberExistsAndActive{
+      uint _subId = subscriberAddressToIndex[msg.sender]; 
+    uint32[] storage _subscriptionIndices = subscriberAddressToSubscriptionIndices[msg.sender];
+    for(uint32 _index=0; _index<_subscriptionIndices .length; _index++)
+    {
+    cancelSubscriptionForService(subscriptions[_subscriptionIndices[_index]].serviceName);
+    }
+   
+
+      withdrawMoney(subscriber[_subId].balances);
+   
+
+ }
 
 }
