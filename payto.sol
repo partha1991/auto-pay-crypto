@@ -9,6 +9,8 @@ enum accountStatus {
   suspended
 }
 
+uint commissionPercentage = 1;
+
   //start company data structure
   struct Company {
   address companyAddress;
@@ -21,10 +23,10 @@ enum accountStatus {
  mapping (address => uint32) companyAddressToIndex;
 
   //start Services data structure
-mapping (bytes32 => uint32) serviceNameToIndex;
+mapping (bytes32 => uint) serviceNameToIndex;
 struct Service { 
   bytes32 serviceName;
-  uint cost;
+  uint32 serviceCost;
   bytes32 companyName;
   accountStatus serviceStatus;
   }
@@ -41,15 +43,22 @@ struct Subscriber {
    }
 
 mapping (address => uint32[]) subscriberAddressToSubscriptionIndices;
+//mapping (address => uint32[]) serviceNameToSubscriptionIndices; //added to show
 Subscription[] subscriptions;
 struct Subscription {
    bytes32 serviceName;
    accountStatus subscriptionStatus;
    uint256 subscriberSince;
-   bytes32 userName;
+   address userAddress;
   }
 // needs to be memory
-  mapping (bytes32 => uint) serviceToTotalMonthlyPayoutAmount;
+  mapping (bytes32 => payoutForService) serviceNameToPaymentAmtStruct;
+
+struct payoutForService{
+uint totalPayoutAmountForService;
+address[] paidCustomers;
+uint timeStamp;
+}
 
 //start methods
 modifier subscriberExistsAndActive(){
@@ -76,13 +85,6 @@ function companyExists() private view returns (bool exists){
   } else return false;
 }
 
-function serviceExists(bytes32 _serviceName) private view returns (bool exists){
-  uint _serviceId = serviceNameToIndex[_serviceName];
-  if((_serviceId < service.length) && (keccak256(service[_serviceId].serviceName) == keccak256(_serviceName)))
-  {
-      return true;
-  } else return false;
-}
 
 modifier subscriberDoesntExistOrInactive(){
   uint _subId = subscriberAddressToIndex[msg.sender];
@@ -99,6 +101,22 @@ modifier companyDoesntExistOrInactive(){
   }
   _;
 }
+function serviceExists(bytes32 _serviceName) private view returns (bool exists){
+  uint _serviceId = serviceNameToIndex[_serviceName];
+  if((_serviceId < service.length) && 
+        (keccak256(service[_serviceId].serviceName) == keccak256(msg.sender)))
+  {
+      return true;
+  } else return false;
+}
+
+modifier serviceExistsAndActive(bytes32 _serviceName){
+uint32 _serviceId = uint32(serviceNameToIndex[_serviceName]);
+require(_serviceId < service.length);
+require(keccak256(service[_serviceId].serviceName) == keccak256(_serviceName));
+require(service[_serviceId].serviceStatus == accountStatus.active);
+_;
+}
 
 modifier serviceDoesntExistsOrInactive(bytes32 _serviceName){
   uint _serviceId = serviceNameToIndex[_serviceName];
@@ -109,18 +127,17 @@ modifier serviceDoesntExistsOrInactive(bytes32 _serviceName){
 }
 
 
-modifier serviceExistsAndActive(bytes32 _serviceName){
-uint32 _serviceId = serviceNameToIndex[_serviceName];
+modifier servicesExistsAndActive(bytes32 _serviceName){
+uint _serviceId = serviceNameToIndex[_serviceName];
 require(_serviceId < service.length);
 require(keccak256(service[_serviceId].serviceName) == keccak256(_serviceName));
 require(service[_serviceId].serviceStatus == accountStatus.active);
 _;
 }
 
-modifier companyExistsAndActive(bytes32 _companyName){
+modifier companyExistsAndActive(){
   uint _companyId = companyAddressToIndex[msg.sender];
   require(_companyId < company.length);
-  require(company[_companyId].companyName == _companyName);
   require(company[_companyId].companyStatus == accountStatus.active);
   _;
 }
@@ -158,8 +175,8 @@ for(uint32 _index=0; _index < _existingSubscriptionIds.length; _index++)
   {
     if( (keccak256(subscriptions[_existingSubscriptionIds[_index]].serviceName) == 
     keccak256(_serviceName)) && 
-    (keccak256(subscriptions[_existingSubscriptionIds[_index]].userName) == 
-     keccak256(subscriber[subscriberAddressToIndex[msg.sender]].userName)))
+    ((subscriptions[_existingSubscriptionIds[_index]].userAddress) == 
+     (subscriber[subscriberAddressToIndex[msg.sender]].subscriberAddress)) )
     {
         return(true, _existingSubscriptionIds[_index]);
     } 
@@ -169,7 +186,7 @@ return(false, 0);
 
 //Subscribe for services - notify company (event) - SubscribeToAServiceFromACompany()
 function subscribeForServices(bytes32 _serviceName) subscriberExistsAndActive
-   serviceExistsAndActive(_serviceName) public returns (bool){
+   servicesExistsAndActive(_serviceName) public returns (bool){
      bool _subExists;
      uint32 _subIndex;
     (_subExists,_subIndex) = checkIfSubscriptionExists(_serviceName);
@@ -180,14 +197,19 @@ function subscribeForServices(bytes32 _serviceName) subscriberExistsAndActive
     } else {
     Subscription memory _newSubscription;
     _newSubscription = Subscription(_serviceName, accountStatus.active, now, 
-    subscriber[subscriberAddressToIndex[msg.sender]].userName);
-    subscriptions.push(_newSubscription);
+    subscriber[subscriberAddressToIndex[msg.sender]].subscriberAddress);
+    uint32 _subscriptionId = uint32(subscriptions.push(_newSubscription));
+    uint32[] storage _subIndices = subscriberAddressToSubscriptionIndices[msg.sender];
+    _subIndices.push(_subscriptionId);
+   // uint32[] _subIndices = serviceNameToSubscriptionIndices[_serviceName]; //added to show
+    //_subIndices.push(_subscriptionId); //added to show
+
    }
 return true;
 }
 
 function cancelSubscriptionForService(bytes32 _serviceName) subscriberExistsAndActive
-   serviceExistsAndActive(_serviceName) public returns (bool){
+   servicesExistsAndActive(_serviceName) public returns (bool){
     bool _subExists;
      uint32 _subIndex;
     (_subExists,_subIndex) = checkIfSubscriptionExists(_serviceName);
@@ -239,27 +261,27 @@ function deactiveSubscriptionsForService(bytes32 _serviceName) private {
       }
 }
 
-function deactivateService(bytes32 _serviceName) private {
-      uint32 _serviceIndex = serviceNameToIndex[_serviceName];
+function deactivateService(uint32 _serviceIndex) private {
       service[_serviceIndex].serviceStatus=accountStatus.inactive;
       deactiveSubscriptionsForService(service[_serviceIndex].serviceName);
 }
 
-function deregisterAsCompany() companyExistsAndActive(company[companyAddressToIndex[msg.sender]].companyName) public{
+function deregisterAsCompany() companyExistsAndActive public{
     uint32[] storage _servicesIndices = companyAddressToServiceIndices[msg.sender];
     for(uint32 _index=0; _index<_servicesIndices.length; _index++)
     {
-      deactivateService(service[_servicesIndices[_index]].serviceName);
+      deactivateService(_servicesIndices[_index]);
     }  
  }
 
- function deregisterServiceAsCompany(bytes32 _serviceName) serviceExistsAndActive(_serviceName) 
-    companyExistsAndActive(company[companyAddressToIndex[msg.sender]].companyName) 
+
+function deregisterServiceAsCompany(bytes32 _serviceName) serviceExistsAndActive(_serviceName) 
+    companyExistsAndActive() 
         public returns (bool){
     uint32[] storage _serviceIndices = companyAddressToServiceIndices[msg.sender];
     for(uint32 _index; _index<_serviceIndices.length; _index++){
       if( keccak256(service[_serviceIndices[_index]].serviceName) == keccak256(_serviceName) ){
-        deactivateService(service[_serviceIndices[_index]].serviceName);
+        deactivateService(_serviceIndices[_index]);
         return true;
       } 
     }
@@ -267,21 +289,88 @@ function deregisterAsCompany() companyExistsAndActive(company[companyAddressToIn
  }
 
 
-function registerServiceAsCompany(bytes32 _serviceName, uint16 _cost) 
-    public serviceDoesntExistsOrInactive(_serviceName) returns (bool){
+function registerServiceAsCompany(bytes32 _serviceName, uint32 _cost) 
+    public serviceDoesntExistsOrInactive(_serviceName) companyExistsAndActive returns (bool){
     if(serviceExists(_serviceName))
     {
+      service[serviceNameToIndex[_serviceName]].serviceCost = _cost;
       service[serviceNameToIndex[_serviceName]].serviceStatus = accountStatus.active;
     } else {
     Service memory _newService;
     _newService = Service(_serviceName, _cost, company[companyAddressToIndex[msg.sender]].companyName, accountStatus.active);
     uint32 _serviceId = uint32(service.push(_newService));
+    serviceNameToIndex[_serviceName]=_serviceId;
     uint32[] storage _serviceIndices = companyAddressToServiceIndices[msg.sender];
    _serviceIndices.push(_serviceId);
+   companyAddressToServiceIndices[msg.sender]=_serviceIndices;
    }
   return true;
 }
 
-
+function calcPaymentForServices() private {
+  uint _timeStamp = now;
+  for(uint32 _subIndex; _subIndex<subscriptions.length;_subIndex++)
+  {
+  address _uAddress = subscriptions[_subIndex].userAddress;
+   
+   Service storage _serviceInstance = service[serviceNameToIndex[subscriptions[_subIndex].serviceName]];
+  if(subscriptions[_subIndex].subscriptionStatus==accountStatus.active && 
+    subscriber[subscriberAddressToIndex[_uAddress]].balances>= _serviceInstance.serviceCost)
+  {
+    subscriber[subscriberAddressToIndex[_uAddress]].balances =- _serviceInstance.serviceCost; 
+    payoutForService storage _servicePayoutInstance =  serviceNameToPaymentAmtStruct[_serviceInstance.serviceName];
+        if(_timeStamp==_servicePayoutInstance.timeStamp)
+        {
+            _servicePayoutInstance.totalPayoutAmountForService += _serviceInstance.serviceCost;
+            _servicePayoutInstance.paidCustomers.push(subscriber[subscriberAddressToIndex[_uAddress]].subscriberAddress);
+        } else {
+             delete _servicePayoutInstance.paidCustomers;
+             _servicePayoutInstance.totalPayoutAmountForService=_serviceInstance.serviceCost;
+            _servicePayoutInstance.timeStamp=_timeStamp;
+            //_servicePayoutInstance.paidCustomers.length=0;
+            _servicePayoutInstance.paidCustomers.push(subscriber[subscriberAddressToIndex[_uAddress]].subscriberAddress);
+        }
+  } else if(subscriptions[_subIndex].subscriptionStatus==accountStatus.active) {
+    subscriptions[_subIndex].subscriptionStatus=accountStatus.inactive;
+  }
+  }
 }
 
+
+function calcTotalPayoutForCompany(address _companyAddr) private view returns (uint){
+uint totalamountForCompany=0;
+uint32[] storage _serviceIndices = companyAddressToServiceIndices[_companyAddr];
+for(uint _sIndex=0; _sIndex<_serviceIndices.length;_sIndex++)
+  {
+    payoutForService storage _paymentForService =
+       serviceNameToPaymentAmtStruct[service[_serviceIndices[_sIndex]].serviceName];
+       if(now - _paymentForService.timeStamp <= 1 hours) //handle 0 subscribers for service giving old values
+       {
+          totalamountForCompany += _paymentForService.totalPayoutAmountForService;
+       }
+  } 
+  return totalamountForCompany;
+}
+
+function transferFunds(address _addr, uint _payout) internal{
+  _addr.transfer(_payout);
+}
+
+function calcCommission(uint _totalPayout) private view returns (uint){
+  uint _commission =  _totalPayout * (1-commissionPercentage/100);
+  return _commission;
+}
+
+function initatePayout() public //onlyOwner{
+  {
+  for(uint32 _compIndex=0; _compIndex<company.length;_compIndex++)
+      {
+        uint totalPayout = calcTotalPayoutForCompany(company[_compIndex].companyAddress);
+        uint commission = calcCommission(totalPayout);
+        require(commission<totalPayout);
+        transferFunds(company[_compIndex].companyAddress,totalPayout-commission); //safeMath
+      }
+    }
+    
+}
+    
