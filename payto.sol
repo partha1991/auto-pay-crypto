@@ -154,7 +154,7 @@ function registerAsSubscriber(bytes32 _userName) public subscriberDoesntExistOrI
     subscriber[_subId].subscriberStatus=accountStatus.active;
   } else{
   Subscriber memory _newSubscriber =  Subscriber(msg.sender, _userName, 0, accountStatus.active);
-  uint _newSubscriberId = subscriber.push(_newSubscriber);
+  uint _newSubscriberId = subscriber.push(_newSubscriber)-1;
   subscriberAddressToIndex[msg.sender] = _newSubscriberId;
   }
 } //- [send money initially] // subscriber doesn’t exists  or is in active (modifiers)
@@ -216,7 +216,7 @@ function subscribeForServices(bytes32 _serviceName) subscriberExistsAndActive
     Subscription memory _newSubscription;
     _newSubscription = Subscription(_serviceName, accountStatus.active, now, 
     subscriber[subscriberAddressToIndex[msg.sender]].subscriberAddress);
-    uint32 _subscriptionId = uint32(subscriptions.push(_newSubscription));
+    uint32 _subscriptionId = uint32(subscriptions.push(_newSubscription)-1);
     uint32[] storage _subIndices = subscriberAddressToSubscriptionIndices[msg.sender];
     _subIndices.push(_subscriptionId);
    // uint32[] _subIndices = serviceNameToSubscriptionIndices[_serviceName]; //added to show
@@ -277,7 +277,7 @@ function registerAsCompany(bytes32 _companyName) companyDoesntExistOrInactive pu
     company[_companyId].companyStatus=accountStatus.active;
   } else{
   Company memory _newCompany =  Company(msg.sender, _companyName, accountStatus.active);
-  uint _newcompanyId = company.push(_newCompany);
+  uint _newcompanyId = company.push(_newCompany)-1;
   companyAddressToIndex[msg.sender] = uint32(_newcompanyId);
   }
 }
@@ -347,7 +347,7 @@ function registerServiceAsCompany(bytes32 _serviceName, uint32 _cost)
     } else {
     Service memory _newService;
     _newService = Service(_serviceName, _cost, company[companyAddressToIndex[msg.sender]].companyName, accountStatus.active);
-    uint32 _serviceId = uint32(service.push(_newService));
+    uint32 _serviceId = uint32(service.push(_newService)-1);
     serviceNameToIndex[_serviceName]=_serviceId;
     uint32[] storage _serviceIndices = companyAddressToServiceIndices[msg.sender];
    _serviceIndices.push(_serviceId);
